@@ -37,6 +37,7 @@ import android.provider.Settings;
 import android.service.notification.StatusBarNotification;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.Display;
 import android.view.DragEvent;
 import android.view.InputDevice;
 import android.view.KeyEvent;
@@ -66,6 +67,7 @@ import com.termux.x11.input.InputStub;
 import com.termux.x11.input.TouchInputHandler;
 import com.termux.x11.utils.FullscreenWorkaround;
 import com.termux.x11.utils.KeyInterceptor;
+import com.termux.x11.utils.SamsungDexUtils;
 import com.termux.x11.utils.TermuxX11ExtraKeys;
 import com.termux.x11.utils.X11ToolbarViewPager;
 
@@ -80,7 +82,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
     public static Handler handler = new Handler();
     FrameLayout frm;
     private TouchInputHandler mInputHandler;
-    private ICmdEntryInterface service = null;
+    protected ICmdEntryInterface service = null;
     public TermuxX11ExtraKeys mExtraKeys;
     private Notification mNotification;
     private final int mNotificationId = 7892;
@@ -200,7 +202,14 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
 
             if (service != null) {
                 try {
-                    service.windowChanged(sfc, lorieView.getDisplay() != null ? lorieView.getDisplay().getName() : "screen");
+                    String name;
+                    if (lorieView.getDisplay().getDisplayId() == Display.DEFAULT_DISPLAY)
+                        name = "Builtin Display";
+                    else if (SamsungDexUtils.checkDeXEnabled(this))
+                        name = "Dex Display";
+                    else
+                        name = "External Display";
+                    service.windowChanged(sfc, name);
                 } catch (RemoteException e) {
                     Log.e("MainActivity", "failed to send windowChanged request", e);
                 }
@@ -245,7 +254,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
     //Register the needed events to handle stylus as left, middle and right click
     @SuppressLint("ClickableViewAccessibility")
     private void initStylusAuxButtons() {
-        boolean stylusMenuEnabled = prefs.showStylusClickOverride.get();
+        boolean stylusMenuEnabled = prefs.showStylusClickOverride.get() && mClientConnected;
         final float menuUnselectedTrasparency = 0.66f;
         final float menuSelectedTrasparency = 1.0f;
         Button left = findViewById(R.id.button_left_click);
@@ -331,6 +340,36 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
         });
     }
 
+    private void showStylusAuxButtons(boolean show) {
+        LinearLayout buttons = findViewById(R.id.mouse_helper_visibility);
+        if (mClientConnected && show) {
+            buttons.setVisibility(View.VISIBLE);
+        } else {
+            //Reset default input back to normal
+            TouchInputHandler.STYLUS_INPUT_HELPER_MODE = 1;
+            final float menuUnselectedTrasparency = 0.66f;
+            final float menuSelectedTrasparency = 1.0f;
+            findViewById(R.id.button_left_click).setAlpha(menuSelectedTrasparency);
+            findViewById(R.id.button_right_click).setAlpha(menuUnselectedTrasparency);
+            findViewById(R.id.button_middle_click).setAlpha(menuUnselectedTrasparency);
+            findViewById(R.id.button_visibility).setAlpha(menuUnselectedTrasparency);
+            buttons.setVisibility(View.GONE);
+        }
+    }
+
+    public void toggleStylusAuxButtons() {
+        showMouseAuxButtons(findViewById(R.id.mouse_helper_visibility).getVisibility() != View.VISIBLE);
+    }
+
+    private void showMouseAuxButtons(boolean show) {
+        findViewById(R.id.mouse_buttons)
+                .setVisibility((mClientConnected && show && "1".equals(prefs.touchMode.get())) ? View.VISIBLE : View.GONE);
+    }
+
+    public void toggleMouseAuxButtons() {
+        showMouseAuxButtons(findViewById(R.id.mouse_buttons).getVisibility() != View.VISIBLE);
+    }
+
     void setSize(View v, int width, int height) {
         ViewGroup.LayoutParams p = v.getLayoutParams();
         p.width = (int) (width * getResources().getDisplayMetrics().density);
@@ -364,7 +403,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
             }
             handler.postDelayed(() -> {
                 int[] offset = new int[2];
-                frm.getLocationOnScreen(offset);
+                frm.getLocationInWindow(offset);
                 primaryLayer.setX(MathUtils.clamp(primaryLayer.getX(), offset[0], offset[0] + frm.getWidth() - primaryLayer.getWidth()));
                 primaryLayer.setY(MathUtils.clamp(primaryLayer.getY(), offset[1], offset[1] + frm.getHeight() - primaryLayer.getHeight()));
             }, 10);
@@ -397,7 +436,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
             public boolean onTouch(View v, MotionEvent e) {
                 switch(e.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        primaryLayer.getLocationOnScreen(startPosition);
+                        primaryLayer.getLocationInWindow(startPosition);
                         startOffset[0] = e.getX();
                         startOffset[1] = e.getY();
                         startTime = SystemClock.uptimeMillis();
@@ -406,15 +445,15 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
                     case MotionEvent.ACTION_MOVE: {
                         int[] offset = new int[2];
                         int[] offset2 = new int[2];
-                        primaryLayer.getLocationOnScreen(offset);
-                        frm.getLocationOnScreen(offset2);
+                        primaryLayer.getLocationInWindow(offset);
+                        frm.getLocationInWindow(offset2);
                         primaryLayer.setX(MathUtils.clamp(offset[0] - startOffset[0] + e.getX(), offset2[0], offset2[0] + frm.getWidth() - primaryLayer.getWidth()));
                         primaryLayer.setY(MathUtils.clamp(offset[1] - startOffset[1] + e.getY(), offset2[1], offset2[1] + frm.getHeight() - primaryLayer.getHeight()));
                         break;
                     }
                     case MotionEvent.ACTION_UP: {
                         final int[] _pos = new int[2];
-                        primaryLayer.getLocationOnScreen(_pos);
+                        primaryLayer.getLocationInWindow(_pos);
                         int deltaX = (int) (startOffset[0] - e.getX()) + (startPosition[0] - _pos[0]);
                         int deltaY = (int) (startOffset[1] - e.getY()) + (startPosition[1] - _pos[1]);
                         pos.setPressed(false);
@@ -513,20 +552,8 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
             setRequestedOrientation(requestedOrientation);
 
         findViewById(R.id.mouse_buttons).setVisibility(prefs.showMouseHelper.get() && "1".equals(prefs.touchMode.get()) && mClientConnected ? View.VISIBLE : View.GONE);
-        LinearLayout buttons = findViewById(R.id.mouse_helper_visibility);
-        if (prefs.showStylusClickOverride.get()) {
-            buttons.setVisibility(View.VISIBLE);
-        } else {
-            //Reset default input back to normal
-            TouchInputHandler.STYLUS_INPUT_HELPER_MODE = 1;
-            final float menuUnselectedTrasparency = 0.66f;
-            final float menuSelectedTrasparency = 1.0f;
-            findViewById(R.id.button_left_click).setAlpha(menuSelectedTrasparency);
-            findViewById(R.id.button_right_click).setAlpha(menuUnselectedTrasparency);
-            findViewById(R.id.button_middle_click).setAlpha(menuUnselectedTrasparency);
-            findViewById(R.id.button_visibility).setAlpha(menuUnselectedTrasparency);
-            buttons.setVisibility(View.GONE);
-        }
+        showMouseAuxButtons(prefs.showMouseHelper.get());
+        showStylusAuxButtons(prefs.showStylusClickOverride.get());
 
         getTerminalToolbarViewPager().setAlpha(((float) prefs.opacityEKBar.get())/100);
 
@@ -798,6 +825,12 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
 
     @SuppressWarnings("SameParameterValue")
     void clientConnectedStateChanged(boolean connected) {
+        if (connected && XrActivity.isEnabled() && !(this instanceof XrActivity)) {
+            XrActivity.openIntent(this);
+            mClientConnected = true;
+            return;
+        }
+
         runOnUiThread(()-> {
             mClientConnected = connected;
             setTerminalToolbarView();
@@ -824,6 +857,11 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
 
     private void checkXEvents() {
         getLorieView().handleXEvents();
+        // an imperfect workaround for Gboard CJK keyboard in DeX soft keyboard mode
+        // in that particular mode during language switching, InputConnection#requestCursorUpdates() is not called and no signal can be picked up. 
+        // therefore, check to activate CJK keyboard is done upon a keypress.  
+        if (getLorieView().enableGboardCJK && SamsungDexUtils.checkDeXEnabled(this))
+            getLorieView().checkRestartInput(false);
         handler.postDelayed(this::checkXEvents, 300);
     }
 

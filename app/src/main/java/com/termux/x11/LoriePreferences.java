@@ -76,17 +76,25 @@ public class LoriePreferences extends AppCompatActivity {
         @SuppressLint("UnspecifiedRegisterReceiverFlag")
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (ACTION_PREFERENCES_CHANGED.equals(intent.getAction())) {
-                if (intent.getBooleanExtra("fromBroadcast", false)) {
-                    getSupportFragmentManager().getFragments().forEach(fragment -> {
-                        if (fragment instanceof LoriePreferenceFragment) {
-                            ((LoriePreferenceFragment) fragment).reloadPrefs();
-                        }
-                    });
-                }
-            }
+            if (ACTION_PREFERENCES_CHANGED.equals(intent.getAction()) &&
+                    intent.getBooleanExtra("fromBroadcast", false))
+                reloadPrefs();
         }
     };
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus)
+            reloadPrefs();
+    }
+
+    private void reloadPrefs() {
+        getSupportFragmentManager().getFragments().forEach(fragment -> {
+            if (fragment instanceof LoriePreferenceFragment)
+                ((LoriePreferenceFragment) fragment).reloadPrefs();
+        });
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -194,7 +202,7 @@ public class LoriePreferences extends AppCompatActivity {
             scalePreference.setUpdatesContinuously(true);
             scalePreference.setSeekBarIncrement(10);
             scalePreference.setShowSeekBarValue(true);
-            capturedPointerSpeedFactor.setMin(30);
+            capturedPointerSpeedFactor.setMin(1);
             capturedPointerSpeedFactor.setMax(200);
             capturedPointerSpeedFactor.setSeekBarIncrement(1);
             capturedPointerSpeedFactor.setShowSeekBarValue(true);
@@ -320,6 +328,8 @@ public class LoriePreferences extends AppCompatActivity {
                                     prefs.extra_keys_config.put(!text.isEmpty() ? text : TermuxX11ExtraKeys.DEFAULT_IVALUE_EXTRA_KEYS);
                                 }
                         )
+                        .setNeutralButton("Reset",
+                                (dialog, whichButton) -> prefs.extra_keys_config.put(TermuxX11ExtraKeys.DEFAULT_IVALUE_EXTRA_KEYS))
                         .setNegativeButton("Cancel", (dialog, whichButton) -> dialog.dismiss())
                         .create()
                         .show();
@@ -389,11 +399,12 @@ public class LoriePreferences extends AppCompatActivity {
                     return false;
                 }
             }
-
-            Intent intent = new Intent(ACTION_PREFERENCES_CHANGED);
-            intent.putExtra("key", key);
-            intent.setPackage("com.termux.x11");
-            requireContext().sendBroadcast(intent);
+            
+            requireContext().sendBroadcast(new Intent(ACTION_PREFERENCES_CHANGED) {{
+                putExtra("key", key);
+                putExtra("fromBroadcast", true);
+                setPackage("com.termux.x11");
+            }});
 
             setMultilineTitle(getPreferenceScreen());
             return true;
